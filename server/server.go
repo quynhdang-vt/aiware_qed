@@ -1,5 +1,10 @@
 package main
 
+/*
+go build
+./server -addr localhost:8080 
+*/
+
 import (
 	"flag"
 	"fmt"
@@ -37,10 +42,10 @@ func getwork(w http.ResponseWriter, r *http.Request) {
 		wr, err := models.ByteArrayToAType(mt, message)
 		if err != nil {
 			// skip
-			log.Println("RECEIVING NOT a work request, err=%v", err)
+			log.Println("RECEIVING NOT a work request, err=", err)
 			continue
 		}
-		 p, b := wr.(*models.GetWorkResponse)
+		 p, b := wr.(*models.GetWorkRequest)
 		 if !b {
 			log.Println(" Not getting type type..")
 			continue
@@ -48,7 +53,7 @@ func getwork(w http.ResponseWriter, r *http.Request) {
 		/// --- do something --- check against the list or just plain store in the map to say that an engine instance wants work
 		// for now, assumes that we'll just turn around and send it on
 
-		workResponse := models.GetWorkResponse{
+		workResponse := &models.GetWorkResponse{
 			Name:         p.Name,
 			ID:           p.ID,
 			ConnID:       p.ConnID,

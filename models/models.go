@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/gorilla/websocket"
+	controllerClient "github.com/veritone/realtime/modules/controller/client"
 	"log"
 	"reflect"
 	"time"
@@ -45,6 +46,8 @@ func init() {
 	log.Printf("REMOVE ME moduleOnInit..")
 	registerType(new (GetWorkRequest))
 	registerType(new (GetWorkResponse))
+	registerType(new (controllerClient.EngineInstanceWorkRequest))
+	registerType(new (controllerClient.EngineInstanceWorkRequestResponse))
 }
  //https://stackoverflow.com/questions/45679408/unmarshal-json-to-reflected-struct
 func makeInstance(name string) (interface{}, error) {

@@ -102,7 +102,7 @@ func main() {
 	for i:=0; i<5; i++ {
 
 		timestring := time.Now().Format(time.RFC3339)
-		if msg1, err := models.LocalInterfaceToRequestMsg(models.GetWorkRequest{
+		if msg1, err := models.LocalInterfaceToRequestMsg(&models.GetWorkRequest{
 			Name:         fmt.Sprintf("NAME-%d-@%s", i, timestring),
 			ID:           fmt.Sprintf("ID-%d-@%s", i, timestring),
 			ConnID:       connID,
