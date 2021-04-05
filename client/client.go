@@ -50,12 +50,12 @@ func main() {
 	workMap := make(map[string]*models.GetWorkResponse)
 	getWorkResponseHandler := func(m models.RequestMsg) error {
 		// make sure that it is something we can do
-		wr, err := models.BytesToGetWorkResponse(m.MsgType, m.Data)
-		if err == nil {
+		wr, err := models.ByteArrayToAType(m.MsgType, m.Data)
+		if p, b := wr.(*models.GetWorkResponse); b {
 			mapMutex.Lock()
-			workMap[wr.ID] = wr
+			workMap[p.ID] = p
 			mapMutex.Unlock()
-			log.Printf("getWorkResponseHandler got %s", models.ToString(wr))
+			log.Printf("getWorkResponseHandler got %s", models.ToString(p))
 		} else {
 			log.Printf("getWorkResponseHandler got err? %v", err)
 		}

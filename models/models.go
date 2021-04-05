@@ -4,18 +4,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/gorilla/websocket"
+	"log"
+	"reflect"
 	"time"
 )
 
-const (
-	unknown         = "unknown"
-	getWorkRequest  = "getWorkRequest"
-	getWorkResponse = "getWorkResponse"
-)
-
 type message struct {
-	MessageCode string // so that we can properly deserialize based on the type
-	Data        json.RawMessage
+	MessageDataType string // so that we can properly deserialize based on the type
+	Data            json.RawMessage
 }
 
 type GetWorkResponse struct {
@@ -34,6 +30,33 @@ type GetWorkRequest struct {
 	TTL          int64  `json:"ttl,omitempty"`
 }
 
+var typeRegistry = make (map[string]reflect.Type)
+func registerType(o interface{}) {
+	name, t := getTypeNameOfObject(o)
+	log.Printf("registerType  REMOVE ME ... NAME=%s, t=%s", name, t.String())
+	typeRegistry[name] = t
+}
+func getTypeNameOfObject(o interface{}) (string, reflect.Type) {
+	t := reflect.TypeOf(o)
+	return  t.String(), t
+}
+
+func init() {
+	log.Printf("REMOVE ME moduleOnInit..")
+	registerType(new (GetWorkRequest))
+	registerType(new (GetWorkResponse))
+}
+ //https://stackoverflow.com/questions/45679408/unmarshal-json-to-reflected-struct
+func makeInstance(name string) (interface{}, error) {
+	if myType, found := typeRegistry[name]; found {
+		p := reflect.New(myType.Elem()).Interface()
+		log.Printf("--- REMOVE ME makeInstance (%s), get %s", name, reflect.TypeOf(p).String())
+		return p, nil
+	} else {
+		return nil, fmt.Errorf("%s is not registered", name)
+	}
+}
+
 func ToString(c interface{}) string {
 	if c == nil {
 		return ""
@@ -41,34 +64,13 @@ func ToString(c interface{}) string {
 	s, _ := json.MarshalIndent(c, "", "\t")
 	return string(s)
 }
-func LocalInterfaceToBytes(p interface{}) (int, []byte, error) {
-	b, _ := json.Marshal(p)
-	msgCode := unknown
-	if _, ok := p.(GetWorkRequest); ok {
-		msgCode = getWorkRequest
-	}
-	if _, ok := p.(GetWorkResponse); ok {
-		msgCode = getWorkResponse
-	}
-	msg := message{
-		MessageCode: msgCode,
-		Data:        b,
-	}
-	res, err := json.Marshal(msg)
-	return websocket.TextMessage, res, err
-}
+
 func LocalInterfaceToRequestMsg(p interface{}) (RequestMsg, error) {
 	b, _ := json.Marshal(p)
-	msgCode := unknown
-	if _, ok := p.(GetWorkRequest); ok {
-		msgCode = getWorkRequest
-	}
-	if _, ok := p.(GetWorkResponse); ok {
-		msgCode = getWorkResponse
-	}
+	name, _ := getTypeNameOfObject(p)
 	msg := message{
-		MessageCode: msgCode,
-		Data:        b,
+		MessageDataType: name,
+		Data:            b,
 	}
 	res, err := json.Marshal(msg)
 	return RequestMsg{
@@ -78,7 +80,7 @@ func LocalInterfaceToRequestMsg(p interface{}) (RequestMsg, error) {
 	}, err
 }
 
-func byteArrToCorrectType(msgType int, b []byte) (interface{}, error) {
+func ByteArrayToAType(msgType int, b []byte) (interface{}, error) {
 	if msgType != websocket.TextMessage {
 		return nil, fmt.Errorf("unrecognized %d", msgType)
 	}
@@ -87,22 +89,26 @@ func byteArrToCorrectType(msgType int, b []byte) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	switch msg.MessageCode {
-	case getWorkResponse:
-		var res = new(GetWorkResponse)
-		err = json.Unmarshal(msg.Data, res)
-		return res, err
-	case getWorkRequest:
-		var res = new(GetWorkRequest)
-		err = json.Unmarshal(msg.Data, res)
-		return res, err
+	log.Printf("-- REMOVE ME, MessageDataType =%s", msg.MessageDataType)
+    p, err := makeInstance(msg.MessageDataType)
+    if err != nil {
+		log.Printf("-- REMOVE ME 0000, makeInstace(%s) failed? err=%v", msg.MessageDataType,err)
+    	return p, err
 	}
-	return nil, fmt.Errorf("Unrecognized %s", msg.MessageCode)
+	log.Printf("-- REMOVE ME 1111, makeInstance(%s) type p = %s", msg.MessageDataType, reflect.TypeOf(p).String())
+
+   n, t:= getTypeNameOfObject(p)
+
+    log.Printf("----- REMOVE ME 2222, makeInstance... name=%s got type t=%v", n, t)
+	err = json.Unmarshal(msg.Data, &p)
+	log.Printf("--- REMOVE bytArrToCorrType failed? %v, type p =%s, p=%s", err, reflect.TypeOf(p).String(), ToString(p))
+	return p, err
 }
 
+/*
 func BytesToGetWorkRequest(msgType int, b []byte) (*GetWorkRequest, error) {
 	p, err := byteArrToCorrectType(msgType, b)
+	log.Printf(" Bytes to getWorkRequest -- err=%v, p=%s, type=%s", err, ToString(p), reflect.TypeOf(p).String())
 	if err != nil {
 		return nil, err
 	}
@@ -121,7 +127,7 @@ func BytesToGetWorkResponse(msgType int, b []byte) (*GetWorkResponse, error) {
 	}
 	return nil, fmt.Errorf("Failed to assert to GetWorkResponse")
 }
-
+*/
 // GetCurrentTimeEpochMs returns current time UTC in milliseconds since epoch
 func GetCurrentTimeEpochMs() int64 {
 	return int64(time.Now().UTC().UnixNano() / 1e6)

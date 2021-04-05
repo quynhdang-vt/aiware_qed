@@ -12,6 +12,8 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+func init() {
+}
 var addr = flag.String("addr", "localhost:8080", "http service address")
 var myID = uuid.New().String()
 var upgrader = websocket.Upgrader{} // use default options
@@ -32,21 +34,24 @@ func getwork(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 
-		workRequest, err := models.BytesToGetWorkRequest(mt, message)
+		wr, err := models.ByteArrayToAType(mt, message)
 		if err != nil {
 			// skip
 			log.Println("RECEIVING NOT a work request, err=%v", err)
 			continue
-		} else {
-			log.Println("RECEIVE a WORK REQUEST ", models.ToString(workRequest))
+		}
+		 p, b := wr.(*models.GetWorkResponse)
+		 if !b {
+			log.Println(" Not getting type type..")
+			continue
 		}
 		/// --- do something --- check against the list or just plain store in the map to say that an engine instance wants work
 		// for now, assumes that we'll just turn around and send it on
 
 		workResponse := models.GetWorkResponse{
-			Name:         workRequest.Name,
-			ID:           workRequest.ID,
-			ConnID:       workRequest.ConnID,
+			Name:         p.Name,
+			ID:           p.ID,
+			ConnID:       p.ConnID,
 			TimestampUTC: models.GetCurrentTimeEpochMs(),
 			WorkItem:     fmt.Sprintf("Server %s - Work ITEM hand to you at "+time.Now().Format(time.RFC3339), myID),
 		}
