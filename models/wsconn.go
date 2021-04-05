@@ -211,7 +211,9 @@ func (cc *clientConn) Close() error {
 func (cc *clientConn) tellServerWeAreClosing() error {
 	if cc.wsConn != nil {
 		_ = cc.writeMessageSync(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
-		cc.wsConn.Close()
+		if cc.wsConn != nil {
+			cc.wsConn.Close()
+		}
 		cc.wsConn = nil
 	}
 	return nil

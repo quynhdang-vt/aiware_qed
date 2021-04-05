@@ -50,12 +50,12 @@ func main() {
 	workMap := make(map[string]*models.GetWorkResponse)
 	getWorkResponseHandler := func(m models.RequestMsg) error {
 		// make sure that it is something we can do
-		wr, err := models.BytesToGetWorkResponse(m.MsgType, m.Data)
-		if err == nil {
+		wr, err := models.ByteArrayToAType(m.MsgType, m.Data)
+		if p, b := wr.(*models.GetWorkResponse); b {
 			mapMutex.Lock()
-			workMap[wr.ID] = wr
+			workMap[p.ID] = p
 			mapMutex.Unlock()
-			log.Printf("getWorkResponseHandler got %s", models.ToString(wr))
+			log.Printf("getWorkResponseHandler got %s", models.ToString(p))
 		} else {
 			log.Printf("getWorkResponseHandler got err? %v", err)
 		}
@@ -102,7 +102,7 @@ func main() {
 	for i:=0; i<5; i++ {
 
 		timestring := time.Now().Format(time.RFC3339)
-		if msg1, err := models.LocalInterfaceToRequestMsg(models.GetWorkRequest{
+		if msg1, err := models.LocalInterfaceToRequestMsg(&models.GetWorkRequest{
 			Name:         fmt.Sprintf("NAME-%d-@%s", i, timestring),
 			ID:           fmt.Sprintf("ID-%d-@%s", i, timestring),
 			ConnID:       connID,
