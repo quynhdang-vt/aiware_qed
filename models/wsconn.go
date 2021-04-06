@@ -39,13 +39,12 @@ type clientConn struct {
 	status           int
 	connectedChannel chan struct{}
 
-	done             chan struct{}
-	maxTimeout       time.Duration
-	readMutex        sync.Mutex
-	writeMutex       sync.Mutex
-	retryMutex       sync.Mutex
+	done       chan struct{}
+	maxTimeout time.Duration
+	readMutex  sync.Mutex
+	writeMutex sync.Mutex
+	retryMutex sync.Mutex
 }
-
 
 func NewClientConn(ctx context.Context, url string, headers http.Header, maxTimeout time.Duration, connID string) (wsConnWrapper, error) {
 	if maxTimeout == 0 {
@@ -68,7 +67,7 @@ func NewClientConn(ctx context.Context, url string, headers http.Header, maxTime
 				return &clientConn{wsConn: c, url: url, headers: headers, status: connected, connectedChannel: make(chan struct{}, 10),
 					done:       make(chan struct{}, 10),
 					maxTimeout: maxTimeout,
-					connInfo:   connectionInfo{
+					connInfo: connectionInfo{
 						Host:   GetOutboundIP(),
 						HostID: connID,
 					},
@@ -79,10 +78,9 @@ func NewClientConn(ctx context.Context, url string, headers http.Header, maxTime
 }
 
 type connectionInfo struct {
-	Host string      `json:"host,omitempty"`
-	HostID string    `json:"hostID,omitempty"`
+	Host   string `json:"host,omitempty"`
+	HostID string `json:"hostID,omitempty"`
 }
-
 
 func (cc *clientConn) retryConnection(ctx context.Context, loc string) error {
 	cc.retryMutex.Lock()
@@ -126,7 +124,7 @@ func (cc *clientConn) ReadMessage(ctx context.Context) (messageType int, p []byt
 	const method = "ReadMessage"
 	for {
 		select {
-		case <- cc.Done():
+		case <-cc.Done():
 			return 0, nil, io.EOF
 		case <-ctx.Done():
 			return 0, nil, fmt.Errorf("context canceled[ReadMessage]")
