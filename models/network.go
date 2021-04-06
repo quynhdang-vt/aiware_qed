@@ -1,6 +1,5 @@
 package models
 
-
 import (
 	"fmt"
 	"net"
@@ -38,4 +37,3 @@ func GetOutboundIP() string {
 
 	return outboundIP
 }
-

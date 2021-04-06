@@ -38,26 +38,21 @@ func main() {
 	u1 := url.URL{Scheme: "ws", Host: *addr1, Path: "/getwork"}
 	wm1, err1 := getWorkManager(u1.String())
 	u2 := url.URL{Scheme: "ws", Host: *addr2, Path: "/getwork"}
-    wm2, err2 := getWorkManager(u2.String())
+	wm2, err2 := getWorkManager(u2.String())
 
-    if err1 != nil && err2 != nil {
-    	log.Fatalf("NO server...")
+	if err1 != nil && err2 != nil {
+		log.Fatalf("NO server...")
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	var mapMutex sync.RWMutex
-	workMap := make(map[string]*models.GetWorkResponse)
-	getWorkResponseHandler := func(m models.RequestMsg) error {
-		// make sure that it is something we can do
-		wr, err := models.ByteArrayToAType(m.MsgType, m.Data)
-		if p, b := wr.(*models.GetWorkResponse); b {
-			mapMutex.Lock()
-			workMap[p.ID] = p
-			mapMutex.Unlock()
+	getWorkResponseHandler := func(ctx context.Context, m interface{}) error {
+		// need a better handler
+		if p, b := m.(*models.GetWorkResponse); b {
+			// do something...
 			log.Printf("getWorkResponseHandler got %s", models.ToString(p))
 		} else {
-			log.Printf("getWorkResponseHandler got err? %v", err)
+			log.Printf("getWorkResponseHandler got err")
 		}
 		return nil
 	}
@@ -66,15 +61,17 @@ func main() {
 	go func() {
 		defer wg.Done()
 		defer log.Printf("WM1 - Exiting receiving work responses, %s\n", wm1.GettURL())
-		wm1.Consume(ctx, getWorkResponseHandler)
+		wm1.AddHandler(models.ObjectTypeName(&models.GetWorkResponse{}), getWorkResponseHandler)
+		wm1.Consume(ctx)
 	}()
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		defer log.Printf("WM2 - Exiting receiving work responses, %s\n", wm2.GettURL())
-		wm2.Consume(ctx, getWorkResponseHandler)
+		wm2.AddHandler(models.ObjectTypeName(&models.GetWorkResponse{}), getWorkResponseHandler)
+		wm2.Consume(ctx)
 	}()
-	getWork := make(chan models.RequestMsg, 100)
+	messageQueue := make(chan []byte, 100)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -83,13 +80,13 @@ func main() {
 			select {
 			case <-ctx.Done():
 				return
-			case m := <-getWork:
-				log.Println("Push a getwork request")
+			case m := <-messageQueue:
+				log.Printf("PUBLISHING a getwork request %s", string(m))
 				err := wm1.Publish(ctx, m)
 				if err != nil {
 					log.Printf("WM1 write to %s, got err=%v", wm1.GettURL(), err)
 				}
-				err  = wm2.Publish(ctx, m)
+				err = wm2.Publish(ctx, m)
 				if err != nil {
 					log.Printf("WM2 write to %s, got err=%v", wm2.GettURL(), err)
 				}
@@ -99,17 +96,17 @@ func main() {
 
 	// let's say we want to send a getwork
 	connID := uuid.New().String()
-	for i:=0; i<5; i++ {
+	for i := 0; i < 5; i++ {
 
 		timestring := time.Now().Format(time.RFC3339)
-		if msg1, err := models.LocalInterfaceToRequestMsg(&models.GetWorkRequest{
+		if msg1, err := models.SerializeToBytesForTransport(&models.GetWorkRequest{
 			Name:         fmt.Sprintf("NAME-%d-@%s", i, timestring),
 			ID:           fmt.Sprintf("ID-%d-@%s", i, timestring),
 			ConnID:       connID,
 			TimestampUTC: models.GetCurrentTimeEpochMs(),
 			TTL:          3600,
 		}); err == nil {
-			getWork <- msg1
+			messageQueue <- msg1
 		}
 		time.Sleep(2 * time.Second)
 

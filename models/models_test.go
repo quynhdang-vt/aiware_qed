@@ -2,15 +2,15 @@ package models
 
 import (
 	"fmt"
+	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/assert"
 	controllerClient "github.com/veritone/realtime/modules/controller/client"
-	"reflect"
 	"testing"
 	"time"
 )
 
 func TestGetWorkRequestToMessageAndBack(t *testing.T) {
-	//init()
+	registerTypes()
 	p := GetWorkRequest{
 		Name:         "name1",
 		ID:           "id1",
@@ -18,10 +18,8 @@ func TestGetWorkRequestToMessageAndBack(t *testing.T) {
 		TimestampUTC: GetCurrentTimeEpochMs(),
 	}
 
-	reqMsg, err := LocalInterfaceToRequestMsg(&p)
-	assert.Contains(t, string(reqMsg.Data), reflect.TypeOf(p).String())
-	t.Logf("msgType=%d, %s, err=%v", reqMsg.MsgType, string(reqMsg.Data), err)
-	pa2, err := ByteArrayToAType(reqMsg.MsgType, reqMsg.Data)
+	bArr, err := SerializeToBytesForTransport(&p)
+	pa2, err := ByteArrayToAType(websocket.TextMessage, bArr)
 	assert.Nil(t, err)
 	assert.NotNil(t, pa2)
 	p2, ok := pa2.(*GetWorkRequest)
@@ -33,7 +31,7 @@ func TestGetWorkRequestToMessageAndBack(t *testing.T) {
 	assert.Equal(t, p.TimestampUTC, p2.TimestampUTC)
 	assert.Equal(t, p.TTL, p2.TTL)
 
-	p3, ok :=  pa2.(*GetWorkResponse)
+	p3, ok := pa2.(*GetWorkResponse)
 	assert.False(t, ok)
 	assert.Nil(t, p3)
 }
@@ -46,10 +44,8 @@ func TestGetWorkResponseToMessageAndBack(t *testing.T) {
 		TimestampUTC: GetCurrentTimeEpochMs(),
 	}
 
-	reqMsg, err := LocalInterfaceToRequestMsg(&p)
-	assert.Contains(t, string(reqMsg.Data), reflect.TypeOf(p).String())
-	t.Logf("msgType=%d, %s, err=%v", reqMsg.MsgType, string(reqMsg.Data), err)
-	pa2, err := ByteArrayToAType(reqMsg.MsgType, reqMsg.Data)
+	bArr, err := SerializeToBytesForTransport(&p)
+	pa2, err := ByteArrayToAType(websocket.TextMessage, bArr)
 	assert.Nil(t, err)
 	assert.NotNil(t, pa2)
 	p2, ok := pa2.(*GetWorkResponse)
@@ -61,74 +57,73 @@ func TestGetWorkResponseToMessageAndBack(t *testing.T) {
 	assert.Equal(t, p.TimestampUTC, p2.TimestampUTC)
 	assert.Equal(t, p.WorkItem, p2.WorkItem)
 
-	p3, ok :=  pa2.(*GetWorkRequest)
+	p3, ok := pa2.(*GetWorkRequest)
 	assert.False(t, ok)
 	assert.Nil(t, p3)
 }
 
 // go test -v -run="TestGetControllerClientStructs"
-func TestGetControllerClientStructs (t *testing.T){
-	p  := controllerClient.EngineInstanceWorkRequest{
-		ContainerStatus:         controllerClient.ContainerStatus{
+func TestGetControllerClientStructs(t *testing.T) {
+	p := controllerClient.EngineInstanceWorkRequest{
+		ContainerStatus: controllerClient.ContainerStatus{
 			CPUUtilization: 95.5,
-			ContainerID:  "containerID1",
+			ContainerID:    "containerID1",
 		},
 		EngineInstanceID:        "EI1",
 		EngineToolkitVersion:    "v1",
 		HostAction:              "haction",
 		HostID:                  "host1",
-		RequestWorkForEngineIds:  [] string{"Engine1",},
-		TaskStatuses:            []controllerClient.TaskStatusDetail {
+		RequestWorkForEngineIds: []string{"Engine1"},
+		TaskStatuses: []controllerClient.TaskStatusDetail{
 			controllerClient.TaskStatusDetail{
 				CreateJobsAction: []controllerClient.CreateJobsAction{
-					controllerClient.CreateJobsAction {BaseInternalJobID:"job1",
-						CreateTDODetail:controllerClient.CreateTdoDetail{
+					controllerClient.CreateJobsAction{BaseInternalJobID: "job1",
+						CreateTDODetail: controllerClient.CreateTdoDetail{
 							Description:   "create1",
 							IsPublic:      true,
 							Name:          "name1",
 							StartDateTime: time.Now(),
-							StopDateTime:  time.Now().Add(5*time.Minute),
+							StopDateTime:  time.Now().Add(5 * time.Minute),
 						}},
 				},
-				EngineID:         "Engine1",
-				ErrorCount:       5,
-				ErrorDetails:     "ErrorDetails1",
-				FailureReason:    "Failur1",
-				Inputs:           []controllerClient.TaskIoStatus{
+				EngineID:      "Engine1",
+				ErrorCount:    5,
+				ErrorDetails:  "ErrorDetails1",
+				FailureReason: "Failur1",
+				Inputs: []controllerClient.TaskIoStatus{
 					controllerClient.TaskIoStatus{
 						Id:                  "io1",
 						ProcessedCount:      5,
 						ProcessedTotalCount: 10,
 					},
 				},
-				InternalJobID:    "IJ1",
-				InternalTaskID:   "IT1",
-				Outputs:          nil,
-				PriorTimestamp:   0,
-				ProcessedStats:   controllerClient.TaskProcessedStats{
+				InternalJobID:  "IJ1",
+				InternalTaskID: "IT1",
+				Outputs:        nil,
+				PriorTimestamp: 0,
+				ProcessedStats: controllerClient.TaskProcessedStats{
 					ProcessedBytes:           100,
 					ProcessedCPUMilliseconds: 5000,
 					ProcessedCPUSeconds:      5,
 					ProcessedChunks:          5,
 					ProcessedMediaSeconds:    3,
 				},
-				RetryCount:       0,
-				TaskAction:       "",
-				TaskOutput:        map[string]interface{} {
-					"key1": "value1",
-					"timestamp1": time.Now().Format(time.RFC3339),      // time is a bit iffy as well as float vs. int will need to use string
+				RetryCount: 0,
+				TaskAction: "",
+				TaskOutput: map[string]interface{}{
+					"key1":       "value1",
+					"timestamp1": time.Now().Format(time.RFC3339), // time is a bit iffy as well as float vs. int will need to use string
 				},
 			},
 		},
-		WorkRequestDetails:      "WorkRequestDetail1",
-		WorkRequestID:           "WorkRequestID1",
-		WorkRequestStatus:       "Running",
+		WorkRequestDetails: "WorkRequestDetail1",
+		WorkRequestID:      "WorkRequestID1",
+		WorkRequestStatus:  "Running",
 	}
 
-	reqMsg, err := LocalInterfaceToRequestMsg(&p)
-	assert.Contains(t, string(reqMsg.Data), reflect.TypeOf(p).String())
-	t.Logf("msgType=%d, %s, err=%v", reqMsg.MsgType, string(reqMsg.Data), err)
-	pa2, err := ByteArrayToAType(reqMsg.MsgType, reqMsg.Data)
+	bArr, err := SerializeToBytesForTransport(&p)
+	assert.Nil(t, err)
+	pa2, err := ByteArrayToAType(websocket.TextMessage, bArr)
 	assert.Nil(t, err)
 	assert.NotNil(t, pa2)
 	p2, ok := pa2.(*controllerClient.EngineInstanceWorkRequest)
@@ -141,7 +136,7 @@ func TestGetControllerClientStructs (t *testing.T){
 	assert.Equal(t, p.ContainerStatus.CPUUtilization, p2.ContainerStatus.CPUUtilization)
 	assert.Equal(t, p.ContainerStatus.ContainerID, p2.ContainerStatus.ContainerID)
 	assert.Equal(t, p.RequestWorkForEngineIds, p2.RequestWorkForEngineIds)
-	b, where :=  taskStatusesEqual(p.TaskStatuses, p2.TaskStatuses)
+	b, where := taskStatusesEqual(p.TaskStatuses, p2.TaskStatuses)
 	if !b {
 		t.Logf("Failed taskStatuses in %s", where)
 	}
@@ -155,7 +150,7 @@ func taskStatusesEqual(ta1, ta2 []controllerClient.TaskStatusDetail) (bool, stri
 		return false, "length1"
 	}
 
-	for i:=0; i<len(ta1); i++ {
+	for i := 0; i < len(ta1); i++ {
 		if ta1[i].EngineID != ta2[i].EngineID {
 			return false, "engineids"
 		}
@@ -173,7 +168,7 @@ func taskStatusesEqual(ta1, ta2 []controllerClient.TaskStatusDetail) (bool, stri
 		if len(ta1[i].Inputs) != len(ta2[i].Inputs) {
 			return false, "length of Inputs"
 		}
-		for j := 0; j<len(ta1[i].Inputs); j++ {
+		for j := 0; j < len(ta1[i].Inputs); j++ {
 			v1 := ta1[i].Inputs[j]
 			v2 := ta2[i].Inputs[j]
 			if v1 != v2 {
@@ -183,11 +178,17 @@ func taskStatusesEqual(ta1, ta2 []controllerClient.TaskStatusDetail) (bool, stri
 		if len(ta1[i].CreateJobsAction) != len(ta2[i].CreateJobsAction) {
 			return false, "length of CreateJobActions"
 		}
-		for j := 0; j<len(ta1[i].CreateJobsAction); j++ {
+		for j := 0; j < len(ta1[i].CreateJobsAction); j++ {
 			v1 := ta1[i].CreateJobsAction[j]
 			v2 := ta2[i].CreateJobsAction[j]
-			if v1!=v2 {
-				return false, fmt.Sprintf("CreateJobActions at %d, v1=%v, v2=%v", j, v1, v2)
+			if v1.CreateTDODetail.Description != v2.CreateTDODetail.Description {
+				return false, "createTDODetail-Description failed"
+			}
+			if v1.CreateTDODetail.StartDateTime.Unix() != v2.CreateTDODetail.StartDateTime.Unix() {
+				return false, "createTDODetail-StartDateTime failed"
+			}
+			if v1.CreateTDODetail.StopDateTime.Unix() != v2.CreateTDODetail.StopDateTime.Unix() {
+				return false, "createTDODetail-StartDateTime failed"
 			}
 		}
 	}
