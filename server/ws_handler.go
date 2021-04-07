@@ -13,94 +13,48 @@ import (
 
 // implement the
 type WSHandler struct {
-	upgrader websocket.Upgrader
-	myID     string
-	handlers map[string]models.WSMessageHandlerFunc
-	wsConn   *websocket.Conn
+	upgrader      websocket.Upgrader
+	ctx           context.Context
+	wsConnectionManager *models.WebSocketConnectionHub
+	myID          string
 }
 
-func NewWSHandle() WSHandler {
+func NewWSHandle(ctx context.Context, wsConnectionManager *models.WebSocketConnectionHub) WSHandler {
 	return WSHandler{
-		upgrader: websocket.Upgrader{},
-		myID:     uuid.New().String(),
-		handlers: make(map[string]models.WSMessageHandlerFunc),
+		upgrader:  websocket.Upgrader{},
+	    wsConnectionManager: wsConnectionManager,
+
+		ctx: ctx,
+		myID : uuid.New().String(),
 	}
 }
-func (h *WSHandler) AddHandler(typeName string, handler models.WSMessageHandlerFunc) {
-	h.handlers[typeName] = handler
-}
+
+
+
+// need context canceling!
 func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	var err error
-	h.wsConn, err = h.upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		log.Print("upgrade:", err)
-		return
-	}
-	log.Println("----------------------- STARTING a WS CONN.........")
-	defer h.wsConn.Close()
-	// expectation:  client push getwork request and we send on getworkResponse
-	messageQueue := make(chan interface{}, 100)
-
-	go func () {
-		for m := range messageQueue {
-			// look up handler
-			typeName := models.ObjectTypeName(m)
-			if handler, b := h.handlers[typeName]; b {
-				handler(context.Background(), m)
-			} else {
-				// just log
-				log.Printf("Got %v", m)
-			}
-		}
-	} ()
-	for {
-		mt, message, err := h.wsConn.ReadMessage()
-		if err != nil {
-			log.Println("read:", err)
-			break
-		}
-
-		wr, err := models.ByteArrayToAType(mt, message)
-		if err != nil {
-			// skip
-			log.Println("RECEIVING NOT a work request, err=", err)
-			continue
-		}
-		log.Printf("Got %s", models.ToString(wr))
-		messageQueue <- wr
-	}
+	h.wsConnectionManager.AddClient(h.ctx, w, r, h.upgrader)
+	// well need to wait for something??
 
 }
 
-func (h *WSHandler) handleGetWorkRequest(ctx context.Context, o interface{}) error {
+func (h *WSHandler) handleGetWorkRequest(ctx context.Context, m *models.MessageInfo) error {
 	/// --- do something --- check against the list or just plain store in the map to say that an engine instance wants work
 	// for now, assumes that we'll just turn around and send it on
+	o := m.Object
 	if p, b := o.(*models.GetWorkRequest); b {
+		// of course to do something about this:
 		workResponse := &models.GetWorkResponse{
 			Name:         p.Name,
 			ID:           p.ID,
 			ConnID:       p.ConnID,
 			TimestampUTC: models.GetCurrentTimeEpochMs(),
-			WorkItem:     fmt.Sprintf("Server %s - Work ITEM hand to you at "+time.Now().Format(time.RFC3339), h.myID),
+			WorkItem:     fmt.Sprintf("Server %s - Work ITEM hand to you at %s", h.myID, time.Now().Format(time.RFC3339)),
 		}
 
-		bArr, err := models.SerializeToBytesForTransport(workResponse)
-		if err != nil {
-			// skip
-			log.Println("Fail to marshal work response, err=%v", err)
-			return err
-		}
-		log.Println("PUSHING Work Response: ", models.ToString(workResponse))
-		if h.wsConn != nil {
-			err = h.wsConn.WriteMessage(websocket.TextMessage, bArr)
-			if err != nil {
-				log.Println("write:", err)
-				return err
-			}
-			return nil
-		} else {
-			return fmt.Errorf("NO WSCONN to return??")
-		}
+		log.Printf("WSHandler.handleGetWorkRequest - sending %s", models.ToString(workResponse))
+		return h.wsConnectionManager.PublishToOneDestination(ctx, workResponse, m.ServerID)
+
 	} else {
 		log.Printf("test test test ... ")
 		return fmt.Errorf("not a getworkrequest")

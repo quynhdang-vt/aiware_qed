@@ -17,17 +17,7 @@ import (
 var addr1 = flag.String("addr1", "localhost:8080", "http service address")
 var addr2 = flag.String("addr2", "localhost:8090", "http service address")
 
-func getWorkManager(url string) (*models.WorkManager, error) {
-	log.Printf("connecting to %s", url)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
-	connID := uuid.New().String()
-
-	workManager, err := models.NewWorkManager(ctx, url, nil, 0, connID)
-
-	return workManager, err
-}
 func main() {
 	flag.Parse()
 	log.SetFlags(0)
@@ -35,20 +25,26 @@ func main() {
 	interrupt := make(chan os.Signal, 100)
 	signal.Notify(interrupt, os.Interrupt)
 
-	u1 := url.URL{Scheme: "ws", Host: *addr1, Path: "/getwork"}
-	wm1, err1 := getWorkManager(u1.String())
-	u2 := url.URL{Scheme: "ws", Host: *addr2, Path: "/getwork"}
-	wm2, err2 := getWorkManager(u2.String())
+	wm := models.NewWebSocketHub()
+	u1 := url.URL{Scheme: "ws", Host: *addr1, Path:  models.WSEndpoint}
+	u2 := url.URL{Scheme: "ws", Host: *addr2, Path: models.WSEndpoint}
+	serverID1 := uuid.New().String()
+	serverID2 := uuid.New().String()
 
-	if err1 != nil && err2 != nil {
-		log.Fatalf("NO server...")
-	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	getWorkResponseHandler := func(ctx context.Context, m interface{}) error {
-		// need a better handler
-		if p, b := m.(*models.GetWorkResponse); b {
+	 wm.AddServer(ctx, u1.String(), nil, 0, serverID1)
+	wm.AddServer(ctx, u2.String(), nil, 0, serverID2)
+
+	/**
+	a handler is given context and an interface pointer to
+	 */
+	getWorkResponseHandler := func(ctx context.Context, aMsg *models.MessageInfo) error {
+		if aMsg.Object == nil {
+			return fmt.Errorf("Object is NIL - no good")
+		}
+		if p, b := aMsg.Object.(*models.GetWorkResponse); b {
 			// do something...
 			log.Printf("getWorkResponseHandler got %s", models.ToString(p))
 		} else {
@@ -56,42 +52,13 @@ func main() {
 		}
 		return nil
 	}
+	wm.AddHandler(models.ObjectTypeName(&models.GetWorkResponse{}), getWorkResponseHandler )
+
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		defer log.Printf("WM1 - Exiting receiving work responses, %s\n", wm1.GettURL())
-		wm1.AddHandler(models.ObjectTypeName(&models.GetWorkResponse{}), getWorkResponseHandler)
-		wm1.Consume(ctx)
-	}()
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		defer log.Printf("WM2 - Exiting receiving work responses, %s\n", wm2.GettURL())
-		wm2.AddHandler(models.ObjectTypeName(&models.GetWorkResponse{}), getWorkResponseHandler)
-		wm2.Consume(ctx)
-	}()
-	messageQueue := make(chan []byte, 100)
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		defer log.Println("Exiting pushing work requests")
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case m := <-messageQueue:
-				log.Printf("PUBLISHING a getwork request %s", string(m))
-				err := wm1.Publish(ctx, m)
-				if err != nil {
-					log.Printf("WM1 write to %s, got err=%v", wm1.GettURL(), err)
-				}
-				err = wm2.Publish(ctx, m)
-				if err != nil {
-					log.Printf("WM2 write to %s, got err=%v", wm2.GettURL(), err)
-				}
-			}
-		}
+		wm.Run(ctx)
 	}()
 
 	// let's say we want to send a getwork
@@ -99,24 +66,36 @@ func main() {
 	for i := 0; i < 5; i++ {
 
 		timestring := time.Now().Format(time.RFC3339)
-		if msg1, err := models.SerializeToBytesForTransport(&models.GetWorkRequest{
+		obj := &models.GetWorkRequest{
 			Name:         fmt.Sprintf("NAME-%d-@%s", i, timestring),
 			ID:           fmt.Sprintf("ID-%d-@%s", i, timestring),
 			ConnID:       connID,
 			TimestampUTC: models.GetCurrentTimeEpochMs(),
 			TTL:          3600,
-		}); err == nil {
-			messageQueue <- msg1
 		}
+
+		wm.Broadcast(ctx, obj)
 		time.Sleep(2 * time.Second)
 
 	}
+	// let's go down to 1
+	wm.Close(serverID1)
 
-	// see when server get it back?
-	log.Println("----- in MAIN every one shutdown..")
+	timestring := time.Now().Format(time.RFC3339)
+	obj := &models.GetWorkRequest{
+		Name:         fmt.Sprintf("NAME-TO SERVER 2 ONLY-@%s",  timestring),
+		ID:           fmt.Sprintf("ID-TO SERVER 2-@%s", timestring),
+		ConnID:       connID,
+		TimestampUTC: models.GetCurrentTimeEpochMs(),
+		TTL:          3600,
+	}
+
+
+	wm.PublishToOneDestination(ctx, obj, serverID2)
+
+	// now canceling and close up
 	cancel()
-	wm1.Close()
-	wm2.Close()
+	wm.RemoveAll()
 	log.Println("----- in MAIN Waiting for every one to close up shop..")
 
 	wg.Wait()

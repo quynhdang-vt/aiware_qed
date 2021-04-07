@@ -4,12 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/gorilla/websocket"
 	controllerClient "github.com/veritone/realtime/modules/controller/client"
 	"log"
 	"reflect"
 	"time"
 )
+
+const WSEndpoint = "/wsfunc"
 
 type GetWorkResponse struct {
 	Name         string `json:"name,omitempty"`
@@ -47,7 +48,6 @@ func init() {
 	registerTypes()
 }
 func registerTypes() {
-	log.Printf("REMOVE ME moduleOnInit..")
 	registerType(new(GetWorkRequest))
 	registerType(new(GetWorkResponse))
 	registerType(new(controllerClient.EngineInstanceWorkRequest))
@@ -55,10 +55,10 @@ func registerTypes() {
 }
 
 //https://stackoverflow.com/questions/45679408/unmarshal-json-to-reflected-struct
-func makeInstance(name string) (interface{}, error) {
+func newInstance(name string) (interface{}, error) {
 	if myType, found := typeRegistry[name]; found {
 		p := reflect.New(myType.Elem()).Interface()
-		log.Printf("--- REMOVE ME makeInstance (%s), get %s", name, reflect.TypeOf(p).String())
+		log.Printf("--- REMOVE ME newInstance (%s), get %s", name, reflect.TypeOf(p).String())
 		return p, nil
 	} else {
 		return nil, fmt.Errorf("%s is not registered", name)
@@ -74,6 +74,9 @@ func ToString(c interface{}) string {
 }
 
 func SerializeToBytesForTransport(p interface{}) ([]byte, error) {
+	if p == nil {
+		return nil, fmt.Errorf("NIL object")
+	}
 	b, err := json.Marshal(p)
 	if err != nil {
 		return nil, err
@@ -92,17 +95,14 @@ func SerializeToBytesForTransport(p interface{}) ([]byte, error) {
 ByteArrayToAType deserializes the byte araray into RequestMsg then from the Data unmarshalled to the real object
 
 */
-func ByteArrayToAType(msgType int, b []byte) (interface{}, error) {
-	if msgType != websocket.TextMessage {
-		return nil, fmt.Errorf("unrecognized %d", msgType)
-	}
+func ByteArrayToAType( b []byte) (interface{}, error) {
 	msg := RequestMsg{}
 	err := json.Unmarshal(b, &msg)
 	if err != nil {
 		return nil, err
 	}
 	log.Printf("------ByteArrayToAType, %s", msg.MsgType)
-	p, err := makeInstance(msg.MsgType)
+	p, err := newInstance(msg.MsgType)
 	if err != nil {
 		return nil, err
 	}
@@ -121,4 +121,8 @@ type RequestMsg struct {
 	Data      []byte
 }
 
-type WSMessageHandlerFunc func(ctx context.Context, m interface{}) error
+type MessageInfo struct {
+	ServerID string
+	Object   interface{}
+}
+type WSMessageHandlerFunc func(ctx context.Context, m *MessageInfo) error

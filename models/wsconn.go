@@ -2,7 +2,8 @@ package models
 
 import (
 	"context"
-	"errors"
+	"github.com/pkg/errors"
+
 	"fmt"
 	"github.com/gorilla/websocket"
 	"io"
@@ -18,8 +19,9 @@ const (
 )
 
 type wsConnWrapper interface {
-	ReadMessage(ctx context.Context) (messageType int, p []byte, err error)
-	WriteMessage(ctx context.Context, messageType int, data []byte) error
+	ReadMessage(ctx context.Context) (p []byte, err error)
+	WriteMessage(ctx context.Context,  data []byte) error
+	SendMessages(ctx context.Context) error
 	Done() <-chan struct{}
 	Close() error
 }
@@ -29,24 +31,39 @@ const (
 	closed    = iota
 	retrying  = iota
 	timedout  = iota
+	interrupted = iota
 )
 
-type clientConn struct {
-	wsConn           *websocket.Conn
-	connInfo         connectionInfo
-	url              string
-	headers          http.Header
-	status           int
-	connectedChannel chan struct{}
+type connectionInfo struct {
+	Host   string `json:"host,omitempty"`
+	HostID string `json:"hostID,omitempty"`
+	IsServer bool `json:"isServer"`
+}
+
+type localMessage struct {
+	msgType int
+	data []byte
+}
+type wsConnWrapperImpl struct {
+	wsConn    *websocket.Conn
+	connInfo  connectionInfo
+	url       string
+	headers   http.Header
+	status    int
+	retryStop chan struct{}
 
 	done       chan struct{}
 	maxTimeout time.Duration
 	readMutex  sync.Mutex
 	writeMutex sync.Mutex
 	retryMutex sync.Mutex
+
+	sendQueue  chan *localMessage
 }
 
-func NewClientConn(ctx context.Context, url string, headers http.Header, maxTimeout time.Duration, connID string) (wsConnWrapper, error) {
+
+/** returns a wsConn wrapper from a client connectingto a server */
+func NewServerConn(ctx context.Context, url string, headers http.Header, maxTimeout time.Duration, connID string) (wsConnWrapper, error) {
 	if maxTimeout == 0 {
 		maxTimeout = defaultTimeout
 	}
@@ -54,7 +71,7 @@ func NewClientConn(ctx context.Context, url string, headers http.Header, maxTime
 	for {
 		select {
 		case <-ctx.Done():
-			return nil, fmt.Errorf("context canceled [NewClientConn]")
+			return nil, fmt.Errorf("context canceled [NewServerConn]")
 		case <-timer.C:
 			return nil, fmt.Errorf("Max timeout reached %s...", maxTimeout.String())
 		default:
@@ -64,25 +81,44 @@ func NewClientConn(ctx context.Context, url string, headers http.Header, maxTime
 					return nil, err
 				}
 			} else {
-				return &clientConn{wsConn: c, url: url, headers: headers, status: connected, connectedChannel: make(chan struct{}, 10),
+				return &wsConnWrapperImpl{wsConn: c,
+					url: url, headers: headers,
+					status:     connected,
+					retryStop:  make(chan struct{}, 10),
 					done:       make(chan struct{}, 10),
 					maxTimeout: maxTimeout,
 					connInfo: connectionInfo{
 						Host:   GetOutboundIP(),
 						HostID: connID,
+						IsServer: true,
 					},
+					sendQueue: make(chan *localMessage, 1000),
 				}, nil
 			}
 		}
 	}
 }
 
-type connectionInfo struct {
-	Host   string `json:"host,omitempty"`
-	HostID string `json:"hostID,omitempty"`
+func NewClientConn(ctx context.Context, w http.ResponseWriter, r *http.Request, upgrader websocket.Upgrader, connID string) (wsConnWrapper, error) {
+	wsConn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		return nil, err
+	}
+	 return &wsConnWrapperImpl{wsConn: wsConn,
+		 status: connected,
+		 done:   make(chan struct{}, 10),
+		 connInfo: connectionInfo{
+			 HostID:   connID,
+			 IsServer: false,
+		 },
+		 sendQueue: make(chan *localMessage, 1000),
+	 }, nil
 }
 
-func (cc *clientConn) retryConnection(ctx context.Context, loc string) error {
+func (cc *wsConnWrapperImpl) retryConnection(ctx context.Context, loc string) error {
+	if !cc.connInfo.IsServer {
+		return fmt.Errorf ("No retry for server")
+	}
 	cc.retryMutex.Lock()
 	defer cc.retryMutex.Unlock()
 	method := fmt.Sprintf("[retryConnection:%s]", loc)
@@ -92,10 +128,10 @@ func (cc *clientConn) retryConnection(ctx context.Context, loc string) error {
 	for {
 		select {
 		case <-ctx.Done():
-			cc.connectedChannel <- struct{}{}
+			cc.retryStop <- struct{}{}
 			return fmt.Errorf("%s context canceled ", method)
 		case <-cc.Done():
-			cc.connectedChannel <- struct{}{}
+			cc.retryStop <- struct{}{}
 			return fmt.Errorf("%s interrupted..", method)
 		default:
 			c, _, connErr := websocket.DefaultDialer.Dial(cc.url, cc.headers)
@@ -104,53 +140,57 @@ func (cc *clientConn) retryConnection(ctx context.Context, loc string) error {
 				log.Printf("%s Still error connecting to %s, connErr=%v\n", method, cc.url, connErr)
 				if time.Since(start) > cc.maxTimeout {
 					cc.status = timedout
-					cc.connectedChannel <- struct{}{}
+					cc.retryStop <- struct{}{}
 					return fmt.Errorf("%s -  failed to retry to connect to %s after %v seconds", method, cc.url, cc.maxTimeout.Seconds())
 				}
-				time.Sleep(1 * time.Second)
+				time.Sleep(1 * time.Second)  // todo configurable
 			} else {
 				log.Println(method, "Got connection??? ")
 				// otherwise go on
 				cc.wsConn = c
 				cc.status = connected
-				cc.connectedChannel <- struct{}{}
+				cc.retryStop <- struct{}{}
 				return nil
 			}
 		}
 	}
 }
 
-func (cc *clientConn) ReadMessage(ctx context.Context) (messageType int, p []byte, err error) {
+func (cc *wsConnWrapperImpl) ReadMessage(ctx context.Context) ( p []byte, err error) {
 	const method = "ReadMessage"
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	for {
 		select {
 		case <-cc.Done():
-			return 0, nil, io.EOF
+			return  nil, io.EOF
 		case <-ctx.Done():
-			return 0, nil, fmt.Errorf("context canceled[ReadMessage]")
+			return  nil, fmt.Errorf("context canceled[ReadMessage]")
 		default:
 			if cc.wsConn != nil {
-				log.Println("--------- REMOVE ME REMOVE ME 100 times.. ReadMessage")
-				msgType, message, err := cc.wsConn.ReadMessage()
+				//log.Printf("--------- ReadMessage  (connId=%s) isServer=%t",  cc.connInfo.HostID, cc.connInfo.IsServer )
+				_, message, err := cc.wsConn.ReadMessage()
+				// todo msgType that is not Text???
 				if err != nil {
-
 					// some one close this
 					if strings.Contains(err.Error(), "closed network connection") {
 						// got it.. just return
-						cc.stopReading()
-						return 0, nil, io.EOF
+						cc.done <- struct{}{}
+						return  nil, io.EOF
 					}
 
 					log.Printf("ReadMessage got err = %v", err)
-
+					if !cc.connInfo.IsServer || strings.Contains(err.Error(), "unexpected EOF") {
+						return nil, err
+					}
 					if strings.Contains(err.Error(), "close") {
-
 						if connErr := cc.retryConnection(ctx, method); connErr != nil {
-							return 0, nil, connErr
+							return nil, connErr
 						}
 						fmt.Printf("readMessageWithRetryConn == ?? ")
 						if cc.wsConn != nil {
-							return cc.wsConn.ReadMessage()
+							_, message, err = cc.wsConn.ReadMessage()
+							return message, err
 						} else {
 							// ???
 							fmt.Printf("what?? ...")
@@ -158,34 +198,74 @@ func (cc *clientConn) ReadMessage(ctx context.Context) (messageType int, p []byt
 					}
 
 				}
-				return msgType, message, err
+				return message, err
 			}
-			return 0, nil, errors.New("reading from a close connection...")
+			return   nil,fmt.Errorf("reading from a close connection...")
 		}
 	}
 }
-func (cc *clientConn) writeMessageSync(messageType int, data []byte) error {
-	cc.writeMutex.Lock()
-	defer cc.writeMutex.Unlock()
-	if cc.wsConn != nil {
-		return cc.wsConn.WriteMessage(messageType, data)
-	}
-	return io.ErrClosedPipe
+
+func (cc *wsConnWrapperImpl) WriteMessage(ctx context.Context, data []byte) error {
+	cc.sendQueue <- &localMessage{websocket.TextMessage, data}
+	return nil
 }
-func (cc *clientConn) WriteMessage(ctx context.Context, messageType int, data []byte) error {
-	const method = "WriteMessage"
+
+func (cc *wsConnWrapperImpl) SendMessages (ctx context.Context) (retErr error) {
+	const method = "writeLoop"
+	defer close(cc.sendQueue)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("%s Context canceled", method)
+		case m := <-cc.sendQueue:
+ 			cc.localWrite(ctx, m)
+		}
+	}
+}
+func (cc *wsConnWrapperImpl) Close() error {
+	// Cleanly close the connection by sending a close message and then
+	// waiting (with timeout) for the server to close the connection.
+	err := cc.tellTheOtherEndWeAreClosing()
+	cc.status = closed
+	return err
+}
+func (cc *wsConnWrapperImpl) tellTheOtherEndWeAreClosing() error {
+	if cc.wsConn != nil {
+		cc.sendQueue <- &localMessage {websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "")}
+	}
+	return nil
+}
+func (cc *wsConnWrapperImpl) Done() <-chan struct{} {
+	return cc.done
+}
+
+func (cc *wsConnWrapperImpl) localWrite(ctx context.Context, m *localMessage) error {
+	const method = "localWrite"
 	if cc.status == retrying {
-		<-cc.connectedChannel
+		<-cc.retryStop
 	}
 	if cc.status != connected {
 		return fmt.Errorf("Connection has issue!!! bailed out, status=%d", cc.status)
 	}
-
-	err := cc.writeMessageSync(messageType, data)
+	if cc.wsConn == nil {
+		return fmt.Errorf("Connection NIL - bailed out ..")
+	}
+	log.Printf(">>>> %s - WriteMessage 1 %s", method, string(m.data))
+	err := cc.wsConn.WriteMessage(m.msgType, m.data)
 	if err == nil {
+		if m.msgType == websocket.CloseMessage {
+			if cc.wsConn != nil {
+				cc.wsConn.Close()
+			}
+			cc.wsConn = nil
+			cc.done <- struct{}{}
+			// we are done!
+			return nil
+		}
 		return nil
 	}
-	if err == io.ErrClosedPipe {
+	if err == io.ErrClosedPipe || cc.connInfo.IsServer {
 		return err
 	}
 	log.Println(method, " -- [1]", err)
@@ -193,32 +273,12 @@ func (cc *clientConn) WriteMessage(ctx context.Context, messageType int, data []
 		if connErr := cc.retryConnection(ctx, method); connErr != nil {
 			return connErr
 		}
-		return cc.writeMessageSync(messageType, data)
-	}
+		log.Printf(">>>> %s - WriteMessage 2", method)
 
-	return fmt.Errorf("connection error!")
-}
-func (cc *clientConn) Close() error {
-	// Cleanly close the connection by sending a close message and then
-	// waiting (with timeout) for the server to close the connection.
-	err := cc.tellServerWeAreClosing()
-	cc.done <- struct{}{}
-	cc.status = closed
-	return err
-}
-func (cc *clientConn) tellServerWeAreClosing() error {
-	if cc.wsConn != nil {
-		_ = cc.writeMessageSync(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
-		if cc.wsConn != nil {
-			cc.wsConn.Close()
-		}
-		cc.wsConn = nil
+		err = cc.wsConn.WriteMessage(m.msgType, m.data)
+	}
+	if err != nil {
+		return errors.Wrapf(err, "connection error!")
 	}
 	return nil
-}
-func (cc *clientConn) Done() <-chan struct{} {
-	return cc.done
-}
-func (cc *clientConn) stopReading() {
-	cc.done <- struct{}{}
 }
