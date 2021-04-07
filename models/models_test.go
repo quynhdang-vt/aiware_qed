@@ -2,7 +2,6 @@ package models
 
 import (
 	"fmt"
-	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/assert"
 	controllerClient "github.com/veritone/realtime/modules/controller/client"
 	"testing"
@@ -19,7 +18,7 @@ func TestGetWorkRequestToMessageAndBack(t *testing.T) {
 	}
 
 	bArr, err := SerializeToBytesForTransport(&p)
-	pa2, err := ByteArrayToAType(websocket.TextMessage, bArr)
+	pa2, err := ByteArrayToAType(bArr)
 	assert.Nil(t, err)
 	assert.NotNil(t, pa2)
 	p2, ok := pa2.(*GetWorkRequest)
@@ -45,7 +44,7 @@ func TestGetWorkResponseToMessageAndBack(t *testing.T) {
 	}
 
 	bArr, err := SerializeToBytesForTransport(&p)
-	pa2, err := ByteArrayToAType(websocket.TextMessage, bArr)
+	pa2, err := ByteArrayToAType(bArr)
 	assert.Nil(t, err)
 	assert.NotNil(t, pa2)
 	p2, ok := pa2.(*GetWorkResponse)
@@ -123,7 +122,7 @@ func TestGetControllerClientStructs(t *testing.T) {
 
 	bArr, err := SerializeToBytesForTransport(&p)
 	assert.Nil(t, err)
-	pa2, err := ByteArrayToAType(websocket.TextMessage, bArr)
+	pa2, err := ByteArrayToAType(bArr)
 	assert.Nil(t, err)
 	assert.NotNil(t, pa2)
 	p2, ok := pa2.(*controllerClient.EngineInstanceWorkRequest)
