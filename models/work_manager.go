@@ -43,17 +43,23 @@ func NewWebSocketHub( ) (*WebSocketConnectionHub) {
 		serverInfo: make(map[string] *ConnectionInfo),
 	}
 }
+/**
+AddServer starts a websocket connection to a server
+ */
 func (w *WebSocketConnectionHub) AddServer(ctx context.Context, url string, headers http.Header, maxTimeout time.Duration, connID string) error {
 	conn, err := NewServerConn(ctx, url, headers, maxTimeout, connID)
 	if err != nil {
 		return err
 	}
 	w.serverInfo[connID] = &ConnectionInfo{myConn: conn, url: url, serverID: connID, done: make (chan struct{}, 10)}
-	// as soon as a server is added, we should start consuming from it
-	go w.consumeFromAConnection(ctx, connID)
+	// as soon as a connection is added, we should start consuming from it
+	go w.connectionLoop(ctx, connID)
 	return nil
 }
 
+/**
+AddClient starts a websocket connection from a client to this server as connected  via HTTP handler
+ */
 func (w *WebSocketConnectionHub) AddClient(ctx context.Context, httpWriter http.ResponseWriter, httpReq *http.Request, upgrader  websocket.Upgrader) (retErr error) {
 	const method = "websocketConnectionHub.AddClient"
 	log.Printf("%s ENTER", method)
@@ -70,7 +76,7 @@ func (w *WebSocketConnectionHub) AddClient(ctx context.Context, httpWriter http.
 		serverID: connID,
 		done: make (chan struct{}, 10),
 	}
-	go w.consumeFromAConnection(ctx, connID)
+	go w.connectionLoop(ctx, connID)
 	return nil
 }
 
@@ -122,8 +128,8 @@ func (w *WebSocketConnectionHub) closeErrChan() {
 /* do we want to get individual ?
 
  */
-func (w *WebSocketConnectionHub) consumeFromAConnection(ctx context.Context, serverID string) error {
-	const method = "consumeFromAConnection"
+func (w *WebSocketConnectionHub) connectionLoop(ctx context.Context, serverID string) error {
+	const method = "connectionLoop"
 	var theServer *ConnectionInfo
 	var found bool
 	if theServer, found = w.serverInfo[serverID]; !found || theServer == nil {
@@ -134,7 +140,6 @@ func (w *WebSocketConnectionHub) consumeFromAConnection(ctx context.Context, ser
 	// do we want to close??
 	defer w.Close(serverID)
 
-	go theServer.myConn.SendMessages(ctx)
 	for {
 		select {
 		case <-ctx.Done():
@@ -203,12 +208,16 @@ func (w *WebSocketConnectionHub) errorChecking() {
 }
 
 func (w *WebSocketConnectionHub) PublishToOneDestination(ctx context.Context, o interface{}, serverID string) error {
+	var method = fmt.Sprintf("PublishToOneDestination:%s", serverID)
+	defer log.Printf("%s EXIT", method)
 	 bArr, err := SerializeToBytesForTransport(o);
 	 if err != nil {
 	 	return err
 	 }
 	 if server, b := w.serverInfo[serverID]; b && server != nil {
+
 	 	if server.myConn != nil {
+			log.Printf("%s GO ON...", method)
 	 		return server.myConn.WriteMessage(ctx, bArr)
 		} else {
 			return fmt.Errorf("server %s connection NIL, no publishing", serverID)

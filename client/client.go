@@ -34,7 +34,7 @@ func main() {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	 wm.AddServer(ctx, u1.String(), nil, 0, serverID1)
+	wm.AddServer(ctx, u1.String(), nil, 0, serverID1)
 	wm.AddServer(ctx, u2.String(), nil, 0, serverID2)
 
 	/**
@@ -93,7 +93,12 @@ func main() {
 
 	wm.PublishToOneDestination(ctx, obj, serverID2)
 
+	time.Sleep(5*time.Second)
+
 	// now canceling and close up
+	// ----- TEST1
+	// how to figure out that we need to flush everything
+	// cancel too soon and we'll die...
 	cancel()
 	wm.RemoveAll()
 	log.Println("----- in MAIN Waiting for every one to close up shop..")
