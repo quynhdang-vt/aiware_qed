@@ -191,7 +191,7 @@ func (w *WebSocketConnectionHub) Run(ctx context.Context) {
 			return
 		case m := <-w.inQueue:
 			// look up handler
-			typeName, _ := getTypeNameOfObject(m.Object)
+			typeName := ObjectTypeName(m.Object)
 			if h, b := w.handlers[typeName]; b {
 				if err := h(ctx, m); err != nil && !w.isClosed {
 					w.errChan <- &MessageInfo{m.ServerID, errors.Wrapf(err, "Failed to handle message from server %s", m.ServerID)}
