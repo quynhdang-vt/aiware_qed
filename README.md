@@ -8,9 +8,13 @@
 
 ```graphql
 cd server
-go build
-./server -addr localhost:8080
-./server -addr localhost:8090
+make build test1
+```
+
+Then in another terminal
+
+```graphql
+make test2
 ```
 
 3. client: client prog to connectto two servers, publish 5 times, then stop
@@ -18,7 +22,7 @@ go build
 ```graphql
 cd client
 make build
-./wss_client
+make test
 ```
 
 you can play around with N clients...
