@@ -8,41 +8,55 @@ import (
 	"github.com/quynhdang-vt/aiware_qed/models"
 	"log"
 	"net/http"
+	"sync"
 	"time"
 )
 
 // implement the
 type WSHandler struct {
-	upgrader      websocket.Upgrader
-	ctx           context.Context
-	wsConnectionManager *models.WebSocketConnectionHub
-	myID          string
+	upgrader websocket.Upgrader
+	ctx      context.Context
+	wsHub    *models.WebSocketConnectionHub
+	myID     string
 }
 
-func NewWSHandle(ctx context.Context, wsConnectionManager *models.WebSocketConnectionHub) WSHandler {
-	return WSHandler{
-		upgrader:  websocket.Upgrader{},
-	    wsConnectionManager: wsConnectionManager,
+func NewWSHandle(ctx context.Context) WSHandler {
+	wsHub := models.NewWebSocketHub()
 
-		ctx: ctx,
-		myID : uuid.New().String(),
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		wsHub.Run(ctx)
+	}()
+
+	return WSHandler{
+		upgrader: websocket.Upgrader{},
+		wsHub:    wsHub,
+
+		ctx:  ctx,
+		myID: uuid.New().String(),
 	}
 }
 
+func (h *WSHandler) AddHandler(objectType string, handler models.WSMessageHandlerFunc) {
+	h.wsHub.AddHandler(objectType, handler)
 
+}
 
 // need context canceling!
 func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	h.wsConnectionManager.AddClient(h.ctx, w, r, h.upgrader)
-	// well need to wait for something??
-
+	h.wsHub.AddClient(h.ctx, w, r, h.upgrader)
 }
 
 func (h *WSHandler) handleGetWorkRequest(ctx context.Context, m *models.MessageInfo) error {
 	/// --- do something --- check against the list or just plain store in the map to say that an engine instance wants work
 	// for now, assumes that we'll just turn around and send it on
-	o := m.Object
-	if p, b := o.(*models.GetWorkRequest); b {
+	if m == nil || m.Object == nil {
+		return fmt.Errorf("invalid parameter")
+	}
+
+	if p, b := m.Object.(*models.GetWorkRequest); b {
 		// of course to do something about this:
 		workResponse := &models.GetWorkResponse{
 			Name:         p.Name,
@@ -53,7 +67,7 @@ func (h *WSHandler) handleGetWorkRequest(ctx context.Context, m *models.MessageI
 		}
 
 		log.Printf("WSHandler.handleGetWorkRequest - sending %s", models.ToString(workResponse))
-		return h.wsConnectionManager.PublishToOneDestination(ctx, workResponse, m.ServerID)
+		return h.wsHub.PublishToOneDestination(ctx, workResponse, m.ServerID)
 
 	} else {
 		log.Printf("test test test ... ")

@@ -11,7 +11,6 @@ import (
 	"github.com/quynhdang-vt/aiware_qed/models"
 	"log"
 	"net/http"
-	"sync"
 )
 
 func init() {
@@ -26,17 +25,8 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	wsHub := models.NewWebSocketHub()
-
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		wsHub.Run(ctx)
-	}()
-
-	wsHandler := NewWSHandle(ctx, wsHub)
-	wsHub.AddHandler(models.ObjectTypeName(&models.GetWorkRequest{}), wsHandler.handleGetWorkRequest)
+	wsHandler := NewWSHandle(ctx)
+	wsHandler.AddHandler(models.ObjectTypeName(&models.GetWorkRequest{}), wsHandler.handleGetWorkRequest)
 
 	http.HandleFunc(models.WSEndpoint, wsHandler.ServeHTTP)
 

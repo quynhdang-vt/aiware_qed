@@ -17,7 +17,6 @@ import (
 var addr1 = flag.String("addr1", "localhost:8080", "http service address")
 var addr2 = flag.String("addr2", "localhost:8090", "http service address")
 
-
 func main() {
 	flag.Parse()
 	log.SetFlags(0)
@@ -26,11 +25,10 @@ func main() {
 	signal.Notify(interrupt, os.Interrupt)
 
 	wm := models.NewWebSocketHub()
-	u1 := url.URL{Scheme: "ws", Host: *addr1, Path:  models.WSEndpoint}
+	u1 := url.URL{Scheme: "ws", Host: *addr1, Path: models.WSEndpoint}
 	u2 := url.URL{Scheme: "ws", Host: *addr2, Path: models.WSEndpoint}
 	serverID1 := uuid.New().String()
 	serverID2 := uuid.New().String()
-
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -39,7 +37,7 @@ func main() {
 
 	/**
 	a handler is given context and an interface pointer to
-	 */
+	*/
 	getWorkResponseHandler := func(ctx context.Context, aMsg *models.MessageInfo) error {
 		if aMsg.Object == nil {
 			return fmt.Errorf("Object is NIL - no good")
@@ -52,7 +50,7 @@ func main() {
 		}
 		return nil
 	}
-	wm.AddHandler(models.ObjectTypeName(&models.GetWorkResponse{}), getWorkResponseHandler )
+	wm.AddHandler(models.ObjectTypeName(&models.GetWorkResponse{}), getWorkResponseHandler)
 
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -83,26 +81,25 @@ func main() {
 
 	timestring := time.Now().Format(time.RFC3339)
 	obj := &models.GetWorkRequest{
-		Name:         fmt.Sprintf("NAME-TO SERVER 2 ONLY-@%s",  timestring),
+		Name:         fmt.Sprintf("NAME-TO SERVER 2 ONLY-@%s", timestring),
 		ID:           fmt.Sprintf("ID-TO SERVER 2-@%s", timestring),
 		ConnID:       connID,
 		TimestampUTC: models.GetCurrentTimeEpochMs(),
 		TTL:          3600,
 	}
 
-
 	wm.PublishToOneDestination(ctx, obj, serverID2)
 
-	time.Sleep(5*time.Second)
+	time.Sleep(5 * time.Second)
 
 	// now canceling and close up
 	// ----- TEST1
 	// how to figure out that we need to flush everything
 	// cancel too soon and we'll die...
 	cancel()
-	wm.RemoveAll()
 	log.Println("----- in MAIN Waiting for every one to close up shop..")
 
 	wg.Wait()
+	wm.RemoveAll()
 	log.Println("The END")
 }

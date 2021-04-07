@@ -95,7 +95,7 @@ func SerializeToBytesForTransport(p interface{}) ([]byte, error) {
 ByteArrayToAType deserializes the byte araray into RequestMsg then from the Data unmarshalled to the real object
 
 */
-func ByteArrayToAType( b []byte) (interface{}, error) {
+func ByteArrayToAType(b []byte) (interface{}, error) {
 	msg := RequestMsg{}
 	err := json.Unmarshal(b, &msg)
 	if err != nil {

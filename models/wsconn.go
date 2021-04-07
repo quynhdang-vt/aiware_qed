@@ -20,28 +20,28 @@ const (
 
 type wsConnWrapper interface {
 	ReadMessage(ctx context.Context) (p []byte, err error)
-	WriteMessage(ctx context.Context,  data []byte) error
+	WriteMessage(ctx context.Context, data []byte) error
 	Done() <-chan struct{}
 	Close() error
 }
 
 const (
-	connected = iota
-	closed    = iota
-	retrying  = iota
-	timedout  = iota
+	connected   = iota
+	closed      = iota
+	retrying    = iota
+	timedout    = iota
 	interrupted = iota
 )
 
 type connectionInfo struct {
-	Host   string `json:"host,omitempty"`
-	HostID string `json:"hostID,omitempty"`
-	IsServer bool `json:"isServer"`
+	Host     string `json:"host,omitempty"`
+	HostID   string `json:"hostID,omitempty"`
+	IsServer bool   `json:"isServer"`
 }
 
 type localMessage struct {
 	msgType int
-	data []byte
+	data    []byte
 }
 type wsConnWrapperImpl struct {
 	wsConn    *websocket.Conn
@@ -59,7 +59,6 @@ type wsConnWrapperImpl struct {
 
 	//sendQueue  chan *localMessage
 }
-
 
 /** returns a wsConn wrapper from a client connectingto a server */
 func NewServerConn(ctx context.Context, url string, headers http.Header, maxTimeout time.Duration, connID string) (wsConnWrapper, error) {
@@ -87,8 +86,8 @@ func NewServerConn(ctx context.Context, url string, headers http.Header, maxTime
 					done:       make(chan struct{}, 10),
 					maxTimeout: maxTimeout,
 					connInfo: connectionInfo{
-						Host:   GetOutboundIP(),
-						HostID: connID,
+						Host:     GetOutboundIP(),
+						HostID:   connID,
 						IsServer: true,
 					},
 					//sendQueue: make(chan *localMessage, 1000),
@@ -103,21 +102,20 @@ func NewClientConn(ctx context.Context, w http.ResponseWriter, r *http.Request, 
 	if err != nil {
 		return nil, err
 	}
-	 return &wsConnWrapperImpl{wsConn: wsConn,
-		 status: connected,
-		 done:   make(chan struct{}, 10),
-		 connInfo: connectionInfo{
-			 HostID:   connID,
-			 IsServer: false,
-		 },
-		 //sendQueue: make(chan *localMessage, 1000),
-	 }, nil
+	return &wsConnWrapperImpl{wsConn: wsConn,
+		status: connected,
+		done:   make(chan struct{}, 10),
+		connInfo: connectionInfo{
+			HostID:   connID,
+			IsServer: false,
+		},
+		//sendQueue: make(chan *localMessage, 1000),
+	}, nil
 }
-
 
 func (cc *wsConnWrapperImpl) retryConnection(ctx context.Context, loc string) error {
 	if !cc.connInfo.IsServer {
-		return fmt.Errorf ("No retry for server")
+		return fmt.Errorf("No retry for server")
 	}
 	cc.retryMutex.Lock()
 	defer cc.retryMutex.Unlock()
@@ -143,7 +141,7 @@ func (cc *wsConnWrapperImpl) retryConnection(ctx context.Context, loc string) er
 					cc.retryStop <- struct{}{}
 					return fmt.Errorf("%s -  failed to retry to connect to %s after %v seconds", method, cc.url, cc.maxTimeout.Seconds())
 				}
-				time.Sleep(1 * time.Second)  // todo configurable
+				time.Sleep(1 * time.Second) // todo configurable
 			} else {
 				log.Println(method, "Got connection??? ")
 				// otherwise go on
@@ -156,16 +154,16 @@ func (cc *wsConnWrapperImpl) retryConnection(ctx context.Context, loc string) er
 	}
 }
 
-func (cc *wsConnWrapperImpl) ReadMessage(ctx context.Context) ( p []byte, err error) {
+func (cc *wsConnWrapperImpl) ReadMessage(ctx context.Context) (p []byte, err error) {
 	const method = "ReadMessage"
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	for {
 		select {
 		case <-cc.Done():
-			return  nil, io.EOF
+			return nil, io.EOF
 		case <-ctx.Done():
-			return  nil, fmt.Errorf("context canceled[ReadMessage]")
+			return nil, fmt.Errorf("context canceled[ReadMessage]")
 		default:
 			if cc.wsConn != nil {
 				//log.Printf("--------- ReadMessage  (connId=%s) isServer=%t",  cc.connInfo.HostID, cc.connInfo.IsServer )
@@ -176,7 +174,7 @@ func (cc *wsConnWrapperImpl) ReadMessage(ctx context.Context) ( p []byte, err er
 					if strings.Contains(err.Error(), "closed network connection") {
 						// got it.. just return
 						cc.done <- struct{}{}
-						return  nil, io.EOF
+						return nil, io.EOF
 					}
 
 					log.Printf("ReadMessage got err = %v", err)
@@ -200,7 +198,7 @@ func (cc *wsConnWrapperImpl) ReadMessage(ctx context.Context) ( p []byte, err er
 				}
 				return message, err
 			}
-			return   nil,fmt.Errorf("reading from a close connection...")
+			return nil, fmt.Errorf("reading from a close connection...")
 		}
 	}
 }
@@ -239,7 +237,6 @@ func (cc *wsConnWrapperImpl) WriteMessage(ctx context.Context, data []byte) erro
 	}
 	return nil
 }
-
 
 func (cc *wsConnWrapperImpl) Close() error {
 	// Cleanly close the connection by sending a close message and then
