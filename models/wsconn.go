@@ -21,8 +21,9 @@ const (
 type wsConnWrapper interface {
 	ReadMessage(ctx context.Context) (p []byte, err error)
 	WriteMessage(ctx context.Context, data []byte) error
+	SendMessages(ctx context.Context) error
 	Done() <-chan struct{}
-	Close() error
+	Close()
 }
 
 const (
@@ -54,10 +55,10 @@ type wsConnWrapperImpl struct {
 	done       chan struct{}
 	maxTimeout time.Duration
 	readMutex  sync.Mutex
-	writeMutex sync.Mutex
+	//writeMutex sync.Mutex
 	retryMutex sync.Mutex
 
-	//sendQueue  chan *localMessage
+	sendQueue  chan *localMessage
 }
 
 /** returns a wsConn wrapper from a client connectingto a server */
@@ -90,7 +91,7 @@ func NewServerConn(ctx context.Context, url string, headers http.Header, maxTime
 						HostID:   connID,
 						IsServer: true,
 					},
-					//sendQueue: make(chan *localMessage, 1000),
+					sendQueue: make(chan *localMessage, 1000),
 				}, nil
 			}
 		}
@@ -109,7 +110,7 @@ func NewClientConn(ctx context.Context, w http.ResponseWriter, r *http.Request, 
 			HostID:   connID,
 			IsServer: false,
 		},
-		//sendQueue: make(chan *localMessage, 1000),
+		sendQueue: make(chan *localMessage, 1000),
 	}, nil
 }
 
@@ -203,6 +204,7 @@ func (cc *wsConnWrapperImpl) ReadMessage(ctx context.Context) (p []byte, err err
 	}
 }
 
+/*
 func (cc *wsConnWrapperImpl) WriteMessage(ctx context.Context, data []byte) error {
 	const method = "WriteMessage"
 	if cc.status == retrying {
@@ -237,26 +239,91 @@ func (cc *wsConnWrapperImpl) WriteMessage(ctx context.Context, data []byte) erro
 	}
 	return nil
 }
+*/
+func (cc *wsConnWrapperImpl) WriteMessage(ctx context.Context, data []byte) error {
+	if cc.status == closed {
+		return fmt.Errorf("shop closed")
+	}
+	cc.sendQueue <- &localMessage{websocket.TextMessage, data}
+	return nil
+}
 
-func (cc *wsConnWrapperImpl) Close() error {
+func (cc *wsConnWrapperImpl) SendMessages (ctx context.Context) (retErr error) {
+	const method = "writeLoop"
+	for {
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("%s Context canceled", method)
+		case m := <-cc.sendQueue:
+			cc.localWrite(ctx, m)
+		}
+	}
+}
+
+func (cc *wsConnWrapperImpl) Close()   {
+	if cc.status == closed {
+		return
+	}
 	// Cleanly close the connection by sending a close message and then
 	// waiting (with timeout) for the server to close the connection.
-
-	err := cc.tellTheOtherEndWeAreClosing()
 	cc.status = closed
-	return err
-}
-func (cc *wsConnWrapperImpl) tellTheOtherEndWeAreClosing() error {
-	cc.writeMutex.Lock()
-	defer cc.writeMutex.Unlock()
-	if cc.wsConn != nil {
-		cc.wsConn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
-		cc.wsConn.Close()
-	}
+	cc.tellTheOtherEndWeAreClosing()
+	cc.wsConn.Close()
 	cc.wsConn = nil
 	cc.done <- struct{}{}
-	return nil
+	close (cc.sendQueue)
+}
+func (cc *wsConnWrapperImpl) tellTheOtherEndWeAreClosing()  {
+	/*
+	cc.writeMutex.Lock()
+	defer cc.writeMutex.Unlock()
+	 */
+	if cc.wsConn != nil {
+		cc.wsConn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+	}
 }
 func (cc *wsConnWrapperImpl) Done() <-chan struct{} {
 	return cc.done
+}
+func (cc *wsConnWrapperImpl) localWrite(ctx context.Context, m *localMessage) error {
+	const method = "localWrite"
+	if cc.status == retrying {
+		<-cc.retryStop
+	}
+	if cc.status != connected {
+		return fmt.Errorf("Connection has issue!!! bailed out, status=%d", cc.status)
+	}
+	if cc.wsConn == nil {
+		return fmt.Errorf("Connection NIL - bailed out ..")
+	}
+	log.Printf(">>>> %s - WriteMessage 1 %s", method, string(m.data))
+	err := cc.wsConn.WriteMessage(m.msgType, m.data)
+	if err == nil {
+		if m.msgType == websocket.CloseMessage {
+			if cc.wsConn != nil {
+				cc.wsConn.Close()
+			}
+			cc.wsConn = nil
+			cc.done <- struct{}{}
+			// we are done!
+			return nil
+		}
+		return nil
+	}
+	if err == io.ErrClosedPipe || cc.connInfo.IsServer {
+		return err
+	}
+	log.Println(method, " -- [1]", err)
+	if strings.Contains(err.Error(), "close") {
+		if connErr := cc.retryConnection(ctx, method); connErr != nil {
+			return connErr
+		}
+		log.Printf(">>>> %s - WriteMessage 2", method)
+
+		err = cc.wsConn.WriteMessage(m.msgType, m.data)
+	}
+	if err != nil {
+		return errors.Wrapf(err, "connection error!")
+	}
+	return nil
 }

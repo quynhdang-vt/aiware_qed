@@ -144,6 +144,7 @@ func (w *WebSocketConnectionHub) connectionLoop(ctx context.Context, serverID st
 	// do we want to close??
 	defer w.Close(serverID)
 
+	go theServer.myConn.SendMessages(ctx)
 	for {
 		select {
 		case <-ctx.Done():
